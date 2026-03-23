@@ -525,7 +525,7 @@ def generate():
                 # Email failure shouldn't block the download
                 print(f"Email error: {email_err}")
 
-        return send_file(combined, as_attachment=True, download_name=filename, mimetype="application/pdf")
+        return send_file(combined, as_attachment=False, download_name=filename, mimetype="application/pdf")
     except Exception as e:
         import traceback
         return render_template_string(HTML, error=str(e)+" | "+traceback.format_exc()[-400:])
