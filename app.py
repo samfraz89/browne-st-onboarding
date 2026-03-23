@@ -499,22 +499,27 @@ def create_sig_overlay(sig_data, today_fmt, page_width, page_height):
     buf = io.BytesIO()
     c = _canvas.Canvas(buf, pagesize=(page_width, page_height))
 
-    # "Signature: ___" line: y0=613.4, y1=622.4
-    # Sig image sits ON the signature line — starts after "Signature: " label (~55pts wide)
-    # Height sized to fit between signature line and name line (gap = 613.4 - 601.4 = 12pts below)
-    sig_x = 124.0    # after "Signature: " label text
-    sig_y = 609.0    # sit on the line (y0 of signature line)
-    sig_w = 180.0    # wide enough to look natural
-    sig_h = 26.0     # fits neatly on the line without overlapping name below
+    # Coordinates from pdfminer on the actual generated PDF:
+    # "Signature: ___"  y0=613.4  y1=622.4
+    # "Name: Sam Fraser" y0=592.4  y1=601.4
+    # "Date: ___"        y0=571.4  y1=580.4
+    #
+    # Sig image: bottom at y0=613.4 (sits ON the signature line), grows upward
+    # Gap above signature line to Pulse 2012 line: 631.7 - 622.4 = 9pts
+    # So max height without touching Pulse 2012 = 9pts — use 14pts (slight overlap is fine)
+    # Start after "Signature: " text — label is ~55pts wide at 9pt font
+    sig_x = 124.0    # after "Signature: " label
+    sig_y = 613.4    # bottom of image sits on the signature line
+    sig_w = 185.0    # wide, natural signature width
+    sig_h = 20.0     # height — sits above the line without touching Name below
 
     c.drawImage(sig_tmp.name, sig_x, sig_y, width=sig_w, height=sig_h,
                 preserveAspectRatio=True, mask="auto")
 
-    # "Date: ___" line: y0=571.4
-    # Write date after "Date: " label (~35pts wide)
+    # Date: line y0=571.4 — write after "Date: " label (~30pts wide)
     c.setFont("Helvetica", 9)
     c.setFillColorRGB(0.1, 0.1, 0.1)
-    c.drawString(103.0, 572.0, today_fmt)
+    c.drawString(103.0, 573.0, today_fmt)
 
     c.save()
     buf.seek(0)
