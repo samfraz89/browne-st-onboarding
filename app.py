@@ -472,6 +472,17 @@ def generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type):
 def index():
     return render_template_string(HTML, error=None)
 
+# Store generated PDF in memory keyed by a token
+_pdf_store = {}
+
+@app.route("/download/<token>")
+def download(token):
+    if token not in _pdf_store:
+        return "File not found or expired.", 404
+    data = _pdf_store[token]
+    buf = io.BytesIO(data["pdf"])
+    return send_file(buf, as_attachment=False, download_name=data["filename"], mimetype="application/pdf")
+
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
@@ -481,13 +492,22 @@ def generate():
         combined  = generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type)
         filename  = f"{first_name}_Onboarding_Pack.pdf"
 
+        # Store PDF with a simple token
+        import uuid
+        token = str(uuid.uuid4())
+        _pdf_store[token] = {"pdf": combined.read(), "filename": filename}
+        # Keep store small — remove old entries if more than 20
+        if len(_pdf_store) > 20:
+            oldest = next(iter(_pdf_store))
+            del _pdf_store[oldest]
+
         # Send email via Resend if API key is configured
         resend_key = os.environ.get("RESEND_API_KEY", "")
         if resend_key:
             try:
                 import urllib.request, json
-                pdf_bytes = combined.read()
-                combined.seek(0)  # reset for download
+                pdf_bytes = _pdf_store[token]["pdf"]
+                combined = io.BytesIO(pdf_bytes)  # reset for email
                 email_payload = {
                     "from": "Browne St. Onboarding <onboarding@brownestreet.co.nz>",
                     "to": ["sam@brownestreet.co.nz"],
@@ -525,7 +545,46 @@ def generate():
                 # Email failure shouldn't block the download
                 print(f"Email error: {email_err}")
 
-        return send_file(combined, as_attachment=False, download_name=filename, mimetype="application/pdf")
+        # Return a ready page with a prominent download button
+        ready_html = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pack Ready</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f4f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem 1rem}
+.card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:420px;width:100%;padding:2rem;text-align:center}
+.top-bar{height:4px;background:#E8521A;border-radius:12px 12px 0 0;margin:-2rem -2rem 2rem}
+.icon{width:64px;height:64px;background:#FEF0EA;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;font-size:28px}
+h2{font-size:20px;font-weight:600;color:#1A1A1A;margin-bottom:8px}
+.sub{font-size:14px;color:#666;margin-bottom:2rem;line-height:1.5}
+.name{font-weight:600;color:#1A1A1A}
+.dl-btn{display:block;width:100%;padding:16px;background:#E8521A;color:#fff;text-decoration:none;border-radius:10px;font-size:17px;font-weight:600;margin-bottom:12px}
+.dl-btn:active{opacity:.85}
+.back{display:block;font-size:14px;color:#999;text-decoration:none;margin-top:8px}
+.instructions{margin-top:1.5rem;padding:12px 14px;background:#f8f8f8;border-radius:8px;font-size:12px;color:#888;line-height:1.7;text-align:left}
+.instructions strong{color:#555}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top-bar"></div>
+  <div class="icon">&#128196;</div>
+  <h2>Pack ready!</h2>
+  <p class="sub">Onboarding pack for <span class="name">""" + full_name + """</span> has been generated.</p>
+  <a href="/download/""" + token + """" class="dl-btn">Open PDF</a>
+  <div class="instructions">
+    <strong>To save on iPhone:</strong><br>
+    1. Tap <strong>Open PDF</strong> above<br>
+    2. Tap the <strong>share button</strong> &#8599; at the bottom of the screen<br>
+    3. Tap <strong>Save to Files</strong> or <strong>Print</strong>
+  </div>
+  <a href="/" class="back">&#8592; Generate another pack</a>
+</div>
+</body>
+</html>"""
+        return ready_html
     except Exception as e:
         import traceback
         return render_template_string(HTML, error=str(e)+" | "+traceback.format_exc()[-400:])
