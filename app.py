@@ -1,6 +1,11 @@
-import base64, zipfile, io, os, subprocess, tempfile
+import base64, zipfile, io, re, os
 from datetime import datetime
 from flask import Flask, request, send_file, render_template_string
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import mm, inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.enums import TA_JUSTIFY
 from pypdf import PdfWriter, PdfReader
 
 app = Flask(__name__)
@@ -15,8 +20,7 @@ HS_DOCX_BYTES   = base64.b64decode(HS_DOCX_B64)
 IR330_PDF_BYTES = base64.b64decode(IR330_PDF_B64)
 KS10_PDF_BYTES  = base64.b64decode(KS10_PDF_B64)
 
-HTML = """
-<!DOCTYPE html>
+HTML = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
@@ -106,13 +110,13 @@ hr{border:none;border-top:1px solid #f0f0f0;margin:1.5rem 0}
   {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
 </div>
 <script>
-function setType(btn, t) {
+function setType(btn,t){
   document.querySelectorAll(".tb").forEach(function(b){b.classList.remove("on");});
   btn.classList.add("on");
-  document.getElementById("empType").value = t;
-  var w=document.getElementById("hrsWrap"), h=document.getElementById("hint");
-  if (t==="casual"){w.style.display="none";h.textContent="Casual: no guaranteed hours";}
-  else if (t==="full-time"){w.style.display="grid";h.textContent="Full-time is typically 38-40 hours per week";document.getElementById("hMin").value="38";document.getElementById("hMax").value="40";}
+  document.getElementById("empType").value=t;
+  var w=document.getElementById("hrsWrap"),h=document.getElementById("hint");
+  if(t==="casual"){w.style.display="none";h.textContent="Casual: no guaranteed hours";}
+  else if(t==="full-time"){w.style.display="grid";h.textContent="Full-time is typically 38-40 hours per week";document.getElementById("hMin").value="38";document.getElementById("hMax").value="40";}
   else{w.style.display="grid";h.textContent="Guaranteed minimum hours for the roster";document.getElementById("hMin").value="";document.getElementById("hMax").value="";}
 }
 var td=new Date(),d5=new Date(td),d3=new Date(td);
@@ -121,40 +125,101 @@ document.querySelector("[name=startDate]").value=d5.toISOString().split("T")[0];
 document.querySelector("[name=signDate]").value=d3.toISOString().split("T")[0];
 </script>
 </body>
-</html>
-"""
+</html>"""
+
+def extract_paragraphs(docx_bytes):
+    zin = zipfile.ZipFile(io.BytesIO(docx_bytes))
+    xml = zin.read("word/document.xml").decode("utf-8")
+    paras = []
+    for p_match in re.finditer(r"<w:p[ >].*?</w:p>", xml, re.DOTALL):
+        p_xml = p_match.group()
+        is_bold = "<w:b/>" in p_xml
+        sz_match = re.search(r"<w:sz w:val=\"(\d+)\"", p_xml)
+        font_size = int(sz_match.group(1)) / 2 if sz_match else 10
+        ind_match = re.search(r"<w:ind w:left=\"(\d+)\"", p_xml)
+        indent = int(ind_match.group(1)) / 1440 * inch if ind_match else 0
+        has_page_break = "<w:sectPr>" in p_xml
+        texts = re.findall(r"<w:t[^>]*>([^<]*)</w:t>", p_xml)
+        text = "".join(texts)
+        text = text.replace("&amp;","&").replace("&lt;","<").replace("&gt;",">").replace("&quot;",'"\")
+        paras.append({"text":text,"bold":is_bold,"size":font_size,"indent":indent,"page_break":has_page_break})
+    return paras
+
+def docx_to_pdf(docx_bytes):
+    paras = extract_paragraphs(docx_bytes)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+        leftMargin=25*mm, rightMargin=25*mm,
+        topMargin=20*mm, bottomMargin=20*mm)
+    normal  = ParagraphStyle("n",  fontName="Helvetica",      fontSize=10, leading=14, spaceAfter=4,  alignment=TA_JUSTIFY)
+    bold_s  = ParagraphStyle("b",  fontName="Helvetica-Bold", fontSize=10, leading=14, spaceAfter=4)
+    story = []
+    prev_empty = False
+    for p in paras:
+        text = p["text"].strip()
+        if p["page_break"] and story:
+            story.append(PageBreak())
+            continue
+        if not text:
+            if not prev_empty:
+                story.append(Spacer(1, 4*mm))
+            prev_empty = True
+            continue
+        prev_empty = False
+        text = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        if p["size"] >= 14:
+            st = ParagraphStyle("big", fontName="Helvetica-Bold", fontSize=p["size"], leading=p["size"]+4, spaceAfter=6, spaceBefore=8)
+        elif p["indent"] > 0:
+            st = ParagraphStyle("ind", fontName="Helvetica", fontSize=10, leading=14, spaceAfter=3, leftIndent=p["indent"], alignment=TA_JUSTIFY)
+        elif p["bold"]:
+            st = bold_s
+        else:
+            st = normal
+        story.append(Paragraph(text, st))
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+def merge_pdfs(pdf_bytes_list):
+    writer = PdfWriter()
+    for pdf_bytes in pdf_bytes_list:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        for page in reader.pages:
+            writer.add_page(page)
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    return out
 
 def generate_agreement_docx(form):
-    full_name  = form.get("fullName", "").strip()
-    addr1      = form.get("addr1", "").strip()
-    suburb     = form.get("suburb", "").strip()
-    citypost   = form.get("citypost", "").strip()
-    pronouns   = form.get("pronouns", "they")
-    role       = form.get("role", "").strip()
-    rate       = float(form.get("rate", "0"))
-    start_date = form.get("startDate", "")
-    sign_date  = form.get("signDate", "")
-    emp_type   = form.get("empType", "part-time")
-    h_min      = form.get("hMin", "20").strip() or "20"
-    h_max      = form.get("hMax", "30").strip() or "30"
-
+    full_name  = form.get("fullName","").strip()
+    addr1      = form.get("addr1","").strip()
+    suburb     = form.get("suburb","").strip()
+    citypost   = form.get("citypost","").strip()
+    pronouns   = form.get("pronouns","they")
+    role       = form.get("role","").strip()
+    rate       = float(form.get("rate","0"))
+    start_date = form.get("startDate","")
+    sign_date  = form.get("signDate","")
+    emp_type   = form.get("empType","part-time")
+    h_min      = form.get("hMin","20").strip() or "20"
+    h_max      = form.get("hMax","30").strip() or "30"
     first_name = full_name.split()[0] if full_name else full_name
 
     def fmt(d):
-        try: return datetime.strptime(d, "%Y-%m-%d").strftime("%-d %B %Y")
+        try: return datetime.strptime(d,"%Y-%m-%d").strftime("%-d %B %Y")
         except: return d
 
     start_fmt = fmt(start_date)
     sign_fmt  = fmt(sign_date) if sign_date else "[sign-by date]"
     today_fmt = datetime.today().strftime("%-d %B %Y")
-
     p = {"she":("she","her","her"),"he":("he","him","his"),"they":("they","them","their")}
-    psub, pobj, ppos = p.get(pronouns, ("they","them","their"))
+    psub,pobj,ppos = p.get(pronouns,("they","them","their"))
 
-    if emp_type == "casual":
+    if emp_type=="casual":
         h63  = "6.3. This is a casual agreement. There are no guaranteed hours of work. Hours are offered as required by the Employer and the Employee may accept or decline shifts offered."
         h131 = "13.1. This is a casual position. There are no guaranteed hours of work. Hours will be offered as required by the Employer, and the Employee may accept or decline each shift as offered."
-    elif emp_type == "full-time":
+    elif emp_type=="full-time":
         h63  = "6.3. This is a full-time agreement. The Employee\'s hours of work are set out in clause 13 of this agreement."
         h131 = f"13.1. This is a full-time position. The Employee\'s hours of work shall be {h_min} to {h_max} hours per week, worked across Monday to Sunday as rostered by the Employer."
     else:
@@ -187,42 +252,18 @@ def generate_agreement_docx(form):
 
     zin = zipfile.ZipFile(io.BytesIO(TEMPLATE_BYTES))
     xml = zin.read("word/document.xml").decode("utf-8")
-    for old, new in replacements:
-        xml = xml.replace(old, new)
+    for old,new in replacements:
+        xml = xml.replace(old,new)
     out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+    with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
-            if item.filename == "word/document.xml":
-                zout.writestr(item, xml.encode("utf-8"))
+            if item.filename=="word/document.xml":
+                zout.writestr(item,xml.encode("utf-8"))
             else:
-                zout.writestr(item, zin.read(item.filename))
+                zout.writestr(item,zin.read(item.filename))
     zin.close()
     out.seek(0)
-    return out.getvalue(), first_name
-
-def docx_to_pdf(docx_bytes):
-    with tempfile.TemporaryDirectory() as tmp:
-        docx_path = os.path.join(tmp, "doc.docx")
-        pdf_path  = os.path.join(tmp, "doc.pdf")
-        with open(docx_path, "wb") as f:
-            f.write(docx_bytes)
-        subprocess.run([
-            "libreoffice", "--headless", "--convert-to", "pdf",
-            "--outdir", tmp, docx_path
-        ], capture_output=True)
-        with open(pdf_path, "rb") as f:
-            return f.read()
-
-def merge_pdfs(pdf_bytes_list):
-    writer = PdfWriter()
-    for pdf_bytes in pdf_bytes_list:
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        for page in reader.pages:
-            writer.add_page(page)
-    out = io.BytesIO()
-    writer.write(out)
-    out.seek(0)
-    return out
+    return out.read(), first_name
 
 @app.route("/", methods=["GET"])
 def index():
@@ -231,19 +272,15 @@ def index():
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
-        # 1. Generate personalised employment agreement docx
         agreement_docx, first_name = generate_agreement_docx(request.form)
-        # 2. Convert employment agreement to PDF
         agreement_pdf = docx_to_pdf(agreement_docx)
-        # 3. Convert H&S guide to PDF
-        hs_pdf = docx_to_pdf(HS_DOCX_BYTES)
-        # 4. Merge: agreement + H&S + IR330 + KS10
-        combined = merge_pdfs([agreement_pdf, hs_pdf, IR330_PDF_BYTES, KS10_PDF_BYTES])
-        filename = f"{first_name}_Onboarding_Pack.pdf"
-        return send_file(combined, as_attachment=True, download_name=filename,
-                         mimetype="application/pdf")
+        hs_pdf        = docx_to_pdf(HS_DOCX_BYTES)
+        combined      = merge_pdfs([agreement_pdf, hs_pdf, IR330_PDF_BYTES, KS10_PDF_BYTES])
+        filename      = f"{first_name}_Onboarding_Pack.pdf"
+        return send_file(combined, as_attachment=True, download_name=filename, mimetype="application/pdf")
     except Exception as e:
-        return render_template_string(HTML, error=str(e))
+        import traceback
+        return render_template_string(HTML, error=str(e) + " | " + traceback.format_exc()[-300:])
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8765))
