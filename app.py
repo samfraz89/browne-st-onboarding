@@ -141,7 +141,7 @@ def extract_paragraphs(docx_bytes):
         has_page_break = "<w:sectPr>" in p_xml
         texts = re.findall(r"<w:t[^>]*>([^<]*)</w:t>", p_xml)
         text = "".join(texts)
-        text = text.replace("&amp;","&").replace("&lt;","<").replace("&gt;",">").replace("&quot;",'"\")
+        text = text.replace("&amp;","&").replace("&lt;","<").replace("&gt;",">").replace("&quot;",'"')
         paras.append({"text":text,"bold":is_bold,"size":font_size,"indent":indent,"page_break":has_page_break})
     return paras
 
