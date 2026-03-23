@@ -138,7 +138,16 @@ hr{border:none;border-top:1px solid #f0f0f0;margin:1.5rem 0}
       <div class="f"><label>Max hrs / week</label><input name="hMax" id="hMax" type="number" placeholder="e.g. 30" min="1" max="60"></div>
     </div>
     <div class="hint" id="hint">Guaranteed minimum hours for the roster</div>
-    <button class="btn" type="submit">Generate onboarding pack</button>
+    <hr>
+    <div class="lbl">Employer signature</div>
+    <p style="font-size:13px;color:#777;margin-bottom:10px;line-height:1.5">Draw your signature below. This will be added to the agreement as Sam Fraser, Director.</p>
+    <canvas id="sigCanvas" width="556" height="140" style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;touch-action:none;width:100%;cursor:crosshair;display:block"></canvas>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button type="button" onclick="clearSig()" style="padding:8px 16px;border:1px solid #e0e0e0;border-radius:7px;background:#fff;font-family:inherit;font-size:13px;cursor:pointer;color:#666">Clear</button>
+      <span id="sigStatus" style="font-size:12px;color:#aaa;align-self:center;margin-left:4px">Sign above with your finger or mouse</span>
+    </div>
+    <input type="hidden" name="signature" id="sigData">
+    <button class="btn" type="submit" onclick="return captureSig()">Generate onboarding pack</button>
   </form>
   <div class="pack-info">
     <strong>Pack includes:</strong><br>
@@ -163,6 +172,30 @@ var td=new Date(),d5=new Date(td),d3=new Date(td);
 d5.setDate(td.getDate()+5);d3.setDate(td.getDate()+3);
 document.querySelector("[name=startDate]").value=d5.toISOString().split("T")[0];
 document.querySelector("[name=signDate]").value=d3.toISOString().split("T")[0];
+
+// Signature pad
+var canvas=document.getElementById("sigCanvas");
+var ctx=canvas.getContext("2d");
+var drawing=false;
+var hasSig=false;
+function getPos(e){
+  var r=canvas.getBoundingClientRect();
+  var scaleX=canvas.width/r.width, scaleY=canvas.height/r.height;
+  if(e.touches){return{x:(e.touches[0].clientX-r.left)*scaleX,y:(e.touches[0].clientY-r.top)*scaleY};}
+  return{x:(e.clientX-r.left)*scaleX,y:(e.clientY-r.top)*scaleY};
+}
+ctx.strokeStyle="#1A1A1A"; ctx.lineWidth=2.5; ctx.lineCap="round"; ctx.lineJoin="round";
+canvas.addEventListener("mousedown",function(e){drawing=true;var p=getPos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);e.preventDefault();});
+canvas.addEventListener("mousemove",function(e){if(!drawing)return;var p=getPos(e);ctx.lineTo(p.x,p.y);ctx.stroke();hasSig=true;document.getElementById("sigStatus").textContent="Signature captured";e.preventDefault();});
+canvas.addEventListener("mouseup",function(){drawing=false;});
+canvas.addEventListener("touchstart",function(e){drawing=true;var p=getPos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);e.preventDefault();},{passive:false});
+canvas.addEventListener("touchmove",function(e){if(!drawing)return;var p=getPos(e);ctx.lineTo(p.x,p.y);ctx.stroke();hasSig=true;document.getElementById("sigStatus").textContent="Signature captured";e.preventDefault();},{passive:false});
+canvas.addEventListener("touchend",function(){drawing=false;});
+function clearSig(){ctx.clearRect(0,0,canvas.width,canvas.height);hasSig=false;document.getElementById("sigStatus").textContent="Sign above with your finger or mouse";}
+function captureSig(){
+  if(hasSig){document.getElementById("sigData").value=canvas.toDataURL("image/png");}
+  return true;
+}
 </script>
 </body></html>"""
 
@@ -389,6 +422,7 @@ def build_hs(paras):
 
 def make_docx(form):
     full_name  = form.get("fullName","").strip()
+    sig_data   = form.get("signature","").strip()  # base64 PNG from canvas
     addr1      = form.get("addr1","").strip()
     suburb     = form.get("suburb","").strip()
     citypost   = form.get("citypost","").strip()
@@ -444,9 +478,45 @@ def make_docx(form):
             if item.filename=="word/document.xml": zout.writestr(item,xml.encode("utf-8"))
             else: zout.writestr(item,zin.read(item.filename))
     zin.close(); out.seek(0)
-    return out.read(), first_name, start_fmt, emp_type
+    return out.read(), first_name, start_fmt, emp_type, sig_data
 
-def generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type):
+
+def create_sig_overlay(sig_data, today_fmt, page_width, page_height):
+    """Create a one-page PDF with the signature image and date stamped at the right position."""
+    import base64 as _b64
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas as _canvas
+
+    if not sig_data or not sig_data.startswith("data:image"):
+        return None
+
+    # Decode the base64 PNG
+    header, b64str = sig_data.split(",", 1)
+    sig_bytes = _b64.b64decode(b64str)
+    sig_tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    sig_tmp.write(sig_bytes); sig_tmp.flush()
+
+    buf = io.BytesIO()
+    c = _canvas.Canvas(buf, pagesize=(page_width, page_height))
+
+    # Signature image — positioned where the signature line is
+    # Approx 60mm from left, 95mm from bottom of page
+    sig_w, sig_h = 55*mm, 18*mm
+    sig_x = 22*mm
+    sig_y = 95*mm
+    c.drawImage(sig_tmp.name, sig_x, sig_y, width=sig_w, height=sig_h,
+                preserveAspectRatio=True, mask="auto")
+
+    # Date next to signature
+    c.setFont("Helvetica", 9)
+    c.setFillColorRGB(0.1, 0.1, 0.1)
+    c.drawString(sig_x, sig_y - 6*mm, today_fmt)
+
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+def generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type, sig_data=""):
     buf = io.BytesIO()
     doc = BaseDocTemplate(buf, pagesize=A4, leftMargin=22*mm, rightMargin=22*mm, topMargin=32*mm, bottomMargin=20*mm)
     frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="normal")
@@ -461,6 +531,39 @@ def generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type):
     story += build_hs(hs_paras)
     doc.build(story)
     buf.seek(0); main_pdf = buf.read()
+
+    # Apply signature overlay if provided
+    if sig_data and sig_data.startswith("data:image"):
+        try:
+            from pypdf import PdfWriter as _W, PdfReader as _R
+            reader_main = _R(io.BytesIO(main_pdf))
+            # Find the page with "Name: Sam Fraser" — typically the last agreement page
+            sig_page_idx = None
+            for idx in range(len(reader_main.pages)):
+                txt = reader_main.pages[idx].extract_text() or ""
+                if "Sam Fraser" in txt and "Signature" in txt:
+                    sig_page_idx = idx
+                    break
+            if sig_page_idx is not None:
+                page = reader_main.pages[sig_page_idx]
+                pw = float(page.mediabox.width)
+                ph = float(page.mediabox.height)
+                today_fmt = datetime.today().strftime("%-d %B %Y")
+                overlay_pdf = create_sig_overlay(sig_data, today_fmt, pw, ph)
+                if overlay_pdf:
+                    overlay_page = _R(io.BytesIO(overlay_pdf)).pages[0]
+                    page.merge_page(overlay_page)
+            # Rebuild the PDF with the overlaid page
+            writer_sig = _W()
+            for page in reader_main.pages:
+                writer_sig.add_page(page)
+            sig_buf = io.BytesIO()
+            writer_sig.write(sig_buf)
+            sig_buf.seek(0)
+            main_pdf = sig_buf.read()
+        except Exception as sig_err:
+            print(f"Signature overlay error: {sig_err}")
+
     writer = PdfWriter()
     for pdf_bytes in [main_pdf, IR330_PDF_BYTES, KS10_PDF_BYTES]:
         for page in PdfReader(io.BytesIO(pdf_bytes)).pages:
@@ -481,15 +584,15 @@ def download(token):
         return "File not found or expired.", 404
     data = _pdf_store[token]
     buf = io.BytesIO(data["pdf"])
-    return send_file(buf, as_attachment=False, download_name=data["filename"], mimetype="application/pdf")
+    return send_file(buf, as_attachment=True, download_name=data["filename"], mimetype="application/pdf")
 
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
-        docx_bytes, first_name, start_fmt, emp_type = make_docx(request.form)
+        docx_bytes, first_name, start_fmt, emp_type, sig_data = make_docx(request.form)
         full_name = request.form.get("fullName","").strip()
         role      = request.form.get("role","").strip()
-        combined  = generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type)
+        combined  = generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type, sig_data)
         filename  = f"{first_name}_Onboarding_Pack.pdf"
 
         # Store PDF with a simple token
