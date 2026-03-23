@@ -454,7 +454,9 @@ def make_docx(form):
     replacements = [
         ("Emily Drage",full_name),("Dear Emily,",f"Dear {first_name},"),
         ("1/10 Tirimoana Road",addr1),("Te Atatu South",suburb),("Auckland 0602",citypost),
-        ("23 March 2026",today_fmt),("26 March 2026",start_fmt),("24 March 2026",sign_fmt),
+        ("23 March 2026",today_fmt),
+        ("If we have not heard from you by 26 March 2026",f"If we have not heard from you by {sign_fmt}"),
+        ("26 March 2026",start_fmt),("24 March 2026",sign_fmt),
         ("role of Front of House.",f"role of {role}."),
         ("2.1. The Employee is employed in the role of Front of House.",f"2.1. The Employee is employed in the role of {role}."),
         ("$28.00 per hour. This rate is above the current adult minimum wage of $23.50 per hour (effective 1 April 2025), and will remain above the minimum wage of $23.95 per hour effective from 1 April 2026.",f"{rate:.2f} per hour. This rate is above the current adult minimum wage of $23.95 per hour effective from 1 April 2026."),
@@ -489,7 +491,6 @@ def create_sig_overlay(sig_data, today_fmt, page_width, page_height):
     if not sig_data or not sig_data.startswith("data:image"):
         return None
 
-    # Decode the base64 PNG
     header, b64str = sig_data.split(",", 1)
     sig_bytes = _b64.b64decode(b64str)
     sig_tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
@@ -498,22 +499,22 @@ def create_sig_overlay(sig_data, today_fmt, page_width, page_height):
     buf = io.BytesIO()
     c = _canvas.Canvas(buf, pagesize=(page_width, page_height))
 
-    # Signature: line is at Y0=613.4 pts from bottom on an A4 page (841.9 pts tall)
-    # Place signature image just above and overlapping the signature line
-    # X0 of text is 68.4 pts, so start sig at same X
-    sig_x = 68.4           # aligned with text left margin (pts)
-    sig_y = 613.4          # bottom of the "Signature:" line (pts)
-    sig_w = 150.0          # width in pts (~53mm)
-    sig_h = 30.0           # height in pts (~11mm) — sits just above the underscores
+    # "Signature: ___" line: y0=613.4, y1=622.4
+    # Sig image sits ON the signature line — starts after "Signature: " label (~55pts wide)
+    # Height sized to fit between signature line and name line (gap = 613.4 - 601.4 = 12pts below)
+    sig_x = 124.0    # after "Signature: " label text
+    sig_y = 609.0    # sit on the line (y0 of signature line)
+    sig_w = 180.0    # wide enough to look natural
+    sig_h = 26.0     # fits neatly on the line without overlapping name below
 
     c.drawImage(sig_tmp.name, sig_x, sig_y, width=sig_w, height=sig_h,
                 preserveAspectRatio=True, mask="auto")
 
-    # Fill in the date line — Date: line is at Y0=571.4 pts
+    # "Date: ___" line: y0=571.4
+    # Write date after "Date: " label (~35pts wide)
     c.setFont("Helvetica", 9)
     c.setFillColorRGB(0.1, 0.1, 0.1)
-    # Position after "Date: " text — approx 68 + 28 pts offset
-    c.drawString(96.0, 571.4, today_fmt)
+    c.drawString(103.0, 572.0, today_fmt)
 
     c.save()
     buf.seek(0)
