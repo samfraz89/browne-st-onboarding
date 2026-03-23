@@ -483,10 +483,12 @@ def make_docx(form):
     return out.read(), first_name, start_fmt, emp_type, sig_data
 
 
-def create_sig_overlay(sig_data, today_fmt, page_width, page_height):
-    """Create a one-page PDF with the signature image and date stamped at the right position."""
+def create_sig_overlay(sig_data, today_fmt, page_pdf_bytes):
+    """Create overlay PDF with signature placed dynamically at the exact Signature line position."""
     import base64 as _b64
     from reportlab.pdfgen import canvas as _canvas
+    from pdfminer.high_level import extract_pages as _ep
+    from pdfminer.layout import LTTextBox as _LTB
 
     if not sig_data or not sig_data.startswith("data:image"):
         return None
@@ -496,30 +498,55 @@ def create_sig_overlay(sig_data, today_fmt, page_width, page_height):
     sig_tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     sig_tmp.write(sig_bytes); sig_tmp.flush()
 
+    # Find exact coordinates of "Signature:" and "Date:" lines using pdfminer
+    sig_y = None
+    date_y = None
+    sig_x = 68.4  # default left margin
+
+    try:
+        pages = list(_ep(io.BytesIO(page_pdf_bytes)))
+        page = pages[0]
+        sig_boxes = []
+        date_boxes = []
+        for element in page:
+            if isinstance(element, _LTB):
+                txt = element.get_text().strip()
+                if txt.startswith("Signature:"):
+                    sig_boxes.append(element.y0)
+                if txt.startswith("Date:") and element.x0 < 100:
+                    date_boxes.append(element.y0)
+        # First Signature box = employer signature line
+        if sig_boxes:
+            sig_y = sorted(sig_boxes, reverse=True)[0]  # highest = employer sig
+        if date_boxes:
+            date_y = sorted(date_boxes, reverse=True)[0]  # highest = employer date
+    except Exception as e:
+        print(f"pdfminer error: {e}")
+
+    if sig_y is None:
+        return None
+
+    # Get page dimensions from the PDF
+    from pypdf import PdfReader as _PR
+    reader = _PR(io.BytesIO(page_pdf_bytes))
+    page_obj = reader.pages[0]
+    pw = float(page_obj.mediabox.width)
+    ph = float(page_obj.mediabox.height)
+
     buf = io.BytesIO()
-    c = _canvas.Canvas(buf, pagesize=(page_width, page_height))
+    c = _canvas.Canvas(buf, pagesize=(pw, ph))
 
-    # Coordinates from pdfminer on the actual generated PDF:
-    # "Signature: ___"  y0=613.4  y1=622.4
-    # "Name: Sam Fraser" y0=592.4  y1=601.4
-    # "Date: ___"        y0=571.4  y1=580.4
-    #
-    # Sig image: bottom at y0=613.4 (sits ON the signature line), grows upward
-    # Gap above signature line to Pulse 2012 line: 631.7 - 622.4 = 9pts
-    # So max height without touching Pulse 2012 = 9pts — use 14pts (slight overlap is fine)
-    # Start after "Signature: " text — label is ~55pts wide at 9pt font
-    sig_x = 124.0    # after "Signature: " label
-    sig_y = 613.4    # bottom of image sits on the signature line
-    sig_w = 185.0    # wide, natural signature width
-    sig_h = 20.0     # height — sits above the line without touching Name below
-
-    c.drawImage(sig_tmp.name, sig_x, sig_y, width=sig_w, height=sig_h,
+    # Place signature image ON the signature line
+    # x: after "Signature: " label (~56pts at 9pt Poppins)
+    # y: bottom of image = y0 of signature line, height = 18pts upward
+    c.drawImage(sig_tmp.name, 125.0, sig_y, width=180.0, height=18.0,
                 preserveAspectRatio=True, mask="auto")
 
-    # Date: line y0=571.4 — write after "Date: " label (~30pts wide)
-    c.setFont("Helvetica", 9)
-    c.setFillColorRGB(0.1, 0.1, 0.1)
-    c.drawString(103.0, 573.0, today_fmt)
+    # Place date on the Date line
+    if date_y is not None:
+        c.setFont("Helvetica", 9)
+        c.setFillColorRGB(0.1, 0.1, 0.1)
+        c.drawString(103.0, date_y + 1.5, today_fmt)
 
     c.save()
     buf.seek(0)
@@ -554,14 +581,17 @@ def generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type, sig_data=""):
                     sig_page_idx = idx
                     break
             if sig_page_idx is not None:
-                page = reader_main.pages[sig_page_idx]
-                pw = float(page.mediabox.width)
-                ph = float(page.mediabox.height)
                 today_fmt = datetime.today().strftime("%-d %B %Y")
-                overlay_pdf = create_sig_overlay(sig_data, today_fmt, pw, ph)
+                # Extract just the signature page as its own PDF for pdfminer analysis
+                single_writer = _W()
+                single_writer.add_page(reader_main.pages[sig_page_idx])
+                single_buf = io.BytesIO()
+                single_writer.write(single_buf)
+                single_buf.seek(0)
+                overlay_pdf = create_sig_overlay(sig_data, today_fmt, single_buf.read())
                 if overlay_pdf:
                     overlay_page = _R(io.BytesIO(overlay_pdf)).pages[0]
-                    page.merge_page(overlay_page)
+                    reader_main.pages[sig_page_idx].merge_page(overlay_page)
             # Rebuild the PDF with the overlaid page
             writer_sig = _W()
             for page in reader_main.pages:
