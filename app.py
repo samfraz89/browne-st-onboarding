@@ -484,7 +484,6 @@ def make_docx(form):
 def create_sig_overlay(sig_data, today_fmt, page_width, page_height):
     """Create a one-page PDF with the signature image and date stamped at the right position."""
     import base64 as _b64
-    from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas as _canvas
 
     if not sig_data or not sig_data.startswith("data:image"):
@@ -499,18 +498,22 @@ def create_sig_overlay(sig_data, today_fmt, page_width, page_height):
     buf = io.BytesIO()
     c = _canvas.Canvas(buf, pagesize=(page_width, page_height))
 
-    # Signature image — positioned where the signature line is
-    # Approx 60mm from left, 95mm from bottom of page
-    sig_w, sig_h = 55*mm, 18*mm
-    sig_x = 22*mm
-    sig_y = 95*mm
+    # Signature: line is at Y0=613.4 pts from bottom on an A4 page (841.9 pts tall)
+    # Place signature image just above and overlapping the signature line
+    # X0 of text is 68.4 pts, so start sig at same X
+    sig_x = 68.4           # aligned with text left margin (pts)
+    sig_y = 613.4          # bottom of the "Signature:" line (pts)
+    sig_w = 150.0          # width in pts (~53mm)
+    sig_h = 30.0           # height in pts (~11mm) — sits just above the underscores
+
     c.drawImage(sig_tmp.name, sig_x, sig_y, width=sig_w, height=sig_h,
                 preserveAspectRatio=True, mask="auto")
 
-    # Date next to signature
+    # Fill in the date line — Date: line is at Y0=571.4 pts
     c.setFont("Helvetica", 9)
     c.setFillColorRGB(0.1, 0.1, 0.1)
-    c.drawString(sig_x, sig_y - 6*mm, today_fmt)
+    # Position after "Date: " text — approx 68 + 28 pts offset
+    c.drawString(96.0, 571.4, today_fmt)
 
     c.save()
     buf.seek(0)
@@ -648,7 +651,7 @@ def generate():
                 # Email failure shouldn't block the download
                 print(f"Email error: {email_err}")
 
-        # Return a ready page with a prominent download button
+        # Return a page that auto-downloads the PDF immediately
         ready_html = """<!DOCTYPE html>
 <html>
 <head>
@@ -659,32 +662,42 @@ def generate():
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f4f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem 1rem}
 .card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:420px;width:100%;padding:2rem;text-align:center}
 .top-bar{height:4px;background:#E8521A;border-radius:12px 12px 0 0;margin:-2rem -2rem 2rem}
-.icon{width:64px;height:64px;background:#FEF0EA;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;font-size:28px}
+.icon{width:64px;height:64px;background:#EAF3DE;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;font-size:28px}
 h2{font-size:20px;font-weight:600;color:#1A1A1A;margin-bottom:8px}
 .sub{font-size:14px;color:#666;margin-bottom:2rem;line-height:1.5}
 .name{font-weight:600;color:#1A1A1A}
 .dl-btn{display:block;width:100%;padding:16px;background:#E8521A;color:#fff;text-decoration:none;border-radius:10px;font-size:17px;font-weight:600;margin-bottom:12px}
 .dl-btn:active{opacity:.85}
-.back{display:block;font-size:14px;color:#999;text-decoration:none;margin-top:8px}
-.instructions{margin-top:1.5rem;padding:12px 14px;background:#f8f8f8;border-radius:8px;font-size:12px;color:#888;line-height:1.7;text-align:left}
-.instructions strong{color:#555}
+.back{display:block;font-size:14px;color:#999;text-decoration:none;margin-top:16px}
+.tip{margin-top:1.5rem;padding:12px 14px;background:#f8f8f8;border-radius:8px;font-size:12px;color:#888;line-height:1.7;text-align:left}
+.tip strong{color:#555}
 </style>
 </head>
 <body>
 <div class="card">
   <div class="top-bar"></div>
-  <div class="icon">&#128196;</div>
+  <div class="icon">&#10003;</div>
   <h2>Pack ready!</h2>
-  <p class="sub">Onboarding pack for <span class="name">""" + full_name + """</span> has been generated.</p>
-  <a href="/download/""" + token + """" class="dl-btn">Open PDF</a>
-  <div class="instructions">
-    <strong>To save on iPhone:</strong><br>
-    1. Tap <strong>Open PDF</strong> above<br>
-    2. Tap the <strong>share button</strong> &#8599; at the bottom of the screen<br>
-    3. Tap <strong>Save to Files</strong> or <strong>Print</strong>
+  <p class="sub">Onboarding pack for <span class="name">""" + full_name + """</span> is downloading now.</p>
+  <a href="/download/""" + token + """" class="dl-btn" download>&#8595; Download PDF</a>
+  <div class="tip">
+    <strong>On iPhone:</strong> If the download doesn't start automatically, tap the button above. The file will appear in your <strong>Files app</strong> under Downloads.
   </div>
   <a href="/" class="back">&#8592; Generate another pack</a>
 </div>
+<script>
+  // Auto-trigger download as soon as page loads
+  window.addEventListener("load", function() {
+    setTimeout(function() {
+      var a = document.createElement("a");
+      a.href = "/download/""" + token + """";
+      a.download = """" + filename + """";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }, 500);
+  });
+</script>
 </body>
 </html>"""
         return ready_html
