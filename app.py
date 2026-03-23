@@ -65,7 +65,7 @@ hr{border:none;border-top:1px solid #f0f0f0;margin:1.5rem 0}
     <div class="lbl">Role &amp; pay</div>
     <div class="row">
       <div class="f"><label>Job title / role</label><input name="role" placeholder="e.g. Front of House" required></div>
-      <div class="f"><label>Hourly rate ($NZD)</label><input name="rate" type="number" step="0.50" min="23.95" placeholder="e.g. 28.00" required></div>
+      <div class="f"><label>Hourly rate ($NZD)</label><input name="rate" type="number" step="any" min="0" placeholder="e.g. 28.00" required></div>
     </div>
     <div class="row">
       <div class="f"><label>Start date</label><input name="startDate" type="date" required></div>
