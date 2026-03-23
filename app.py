@@ -142,10 +142,11 @@ hr{border:none;border-top:1px solid #f0f0f0;margin:1.5rem 0}
   </form>
   <div class="pack-info">
     <strong>Pack includes:</strong><br>
-    1. Employment agreement (personalised)<br>
+    1. Employment agreement + job description (personalised)<br>
     2. Health &amp; Safety guide + Do\'s &amp; Don\'ts<br>
     3. IR330 &mdash; Tax code declaration<br>
-    4. KS10 &mdash; KiwiSaver opt-out form
+    4. KS10 &mdash; KiwiSaver opt-out form<br><br>
+    <strong>After generating:</strong> PDF downloads automatically + a copy is emailed to sam@brownestreet.co.nz
   </div>
   {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
 </div>
@@ -233,6 +234,64 @@ def add(story, f):
     if f is None: return
     if isinstance(f, list): story.extend([x for x in f if x is not None])
     else: story.append(f)
+
+
+def build_jd(role="Front of House"):
+    s = lambda t: t.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+    story = []
+    story.append(Spacer(1, 3*mm))
+    story.append(Paragraph("Job Description", ParagraphStyle("dt_jd", fontName="Poppins-Bold", fontSize=17, textColor=BLACK, spaceAfter=4*mm)))
+    story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=5*mm))
+    sec      = ParagraphStyle("sec", fontName="Poppins-Bold",  fontSize=10, textColor=ORANGE, spaceBefore=4*mm, spaceAfter=1*mm, leading=14)
+    rule_hr  = lambda: HRFlowable(width="100%", thickness=0.5, color=MGREY, spaceAfter=3*mm)
+    lbl      = ParagraphStyle("lbl", fontName="Poppins-Bold",  fontSize=9,  textColor=BLACK, spaceAfter=2*mm, leading=13)
+    bul      = ParagraphStyle("bul", fontName="Poppins",       fontSize=8.5,textColor=BLACK, spaceAfter=1, leading=12, leftIndent=4*mm)
+    bold_bul = ParagraphStyle("bbl", fontName="Poppins-Bold",  fontSize=8.5,textColor=BLACK, spaceAfter=2, leading=12, leftIndent=4*mm)
+    story.append(Paragraph("Job title", sec)); story.append(rule_hr())
+    story.append(Paragraph(s(role), lbl))
+    story.append(Paragraph("Purpose", sec)); story.append(rule_hr())
+    story.append(Paragraph("To deliver a fantastic customer experience in the restaurant, ensuring adherence to company processes whilst contributing to a fun working environment.", bold_bul))
+    story.append(Paragraph("Specific duties &amp; responsibilities", sec)); story.append(rule_hr())
+    for item in [
+        "Complete opening and closing duties as per schedule.",
+        "Greet all customers in a friendly and appropriate manner.",
+        "See customers to their table and inform them of daily specials.",
+        "Use till and EFTPOS correctly. Give correct change.",
+        "Take orders from customers, waiting on tables and cleaning tables as required.",
+        "Take table bookings over the phone.",
+        "Prepare and present cabinet food, ensuring cabinets are kept well stocked and tidy.",
+        "Make coffee in accordance with training provided, as and when required.",
+        "Go out of your way to help customers in order to create a regular and loyal customer base.",
+        "Willingly assist other staff members with customer problems or requests.",
+        "Ensure the restaurant is kept clean and tidy in keeping with food safety standards at all times.",
+        "Assist in the kitchen when required (e.g. dishes, food prep).",
+        "Ensure the coffee station, service areas and bar are well stocked and tidy.",
+        "Check customer's identification to ensure minimum age requirements for alcohol consumption are met.",
+    ]:
+        story.append(Paragraph("\u2713   "+s(item), bul))
+    story.append(Paragraph("General duties &amp; responsibilities", sec)); story.append(rule_hr())
+    for item in [
+        "Be punctual and work the hours and times specified.",
+        "Prioritise workload to ensure the most important tasks are completed with urgency and to a high standard.",
+        "Support and help develop a positive workplace culture.",
+        "Demonstrate excellent interpersonal communication skills.",
+        "Responsibly manage all business resources within accountability levels.",
+        "Comply with all employment obligations.",
+        "Promptly follow all reasonable and lawful instructions and directions.",
+        "Serve the business in good faith, promoting and protecting its best interests.",
+        "Demonstrate a commitment to Health and Safety at work at all times.",
+    ]:
+        story.append(Paragraph("\u2713   "+s(item), bul))
+    story.append(Paragraph("Skills, experience &amp; education", sec)); story.append(rule_hr())
+    for item in [
+        "Customer facing experience required, and experience in hospitality preferred.",
+        "Excellent communication and interpersonal skills.",
+        "Team player with a positive attitude.",
+        "Experience serving alcohol desirable.",
+        "Genuine passion for delivering great service.",
+    ]:
+        story.append(Paragraph("\u2713   "+s(item), bul))
+    return story
 
 def build_cover(full_name, role, start_fmt, emp_type, paras):
     story = []
@@ -397,6 +456,8 @@ def generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type):
     story  = build_cover(full_name, role, start_fmt, emp_type, tmpl_paras)
     story += build_agreement(tmpl_paras)
     story.append(PageBreak())
+    story += build_jd(role)
+    story.append(PageBreak())
     story += build_hs(hs_paras)
     doc.build(story)
     buf.seek(0); main_pdf = buf.read()
@@ -419,6 +480,51 @@ def generate():
         role      = request.form.get("role","").strip()
         combined  = generate_pdf(docx_bytes, full_name, role, start_fmt, emp_type)
         filename  = f"{first_name}_Onboarding_Pack.pdf"
+
+        # Send email via Resend if API key is configured
+        resend_key = os.environ.get("RESEND_API_KEY", "")
+        if resend_key:
+            try:
+                import urllib.request, json
+                pdf_bytes = combined.read()
+                combined.seek(0)  # reset for download
+                email_payload = {
+                    "from": "Browne St. Onboarding <onboarding@brownestreet.co.nz>",
+                    "to": ["sam@brownestreet.co.nz"],
+                    "subject": f"Onboarding pack — {full_name}",
+                    "html": f"""
+                        <div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto">
+                          <div style="background:#E8521A;height:4px;border-radius:4px 4px 0 0"></div>
+                          <div style="padding:2rem;background:#fff;border:1px solid #eee;border-top:none">
+                            <img src="https://web-production-60f95.up.railway.app/logo" width="60" style="margin-bottom:1rem">
+                            <h2 style="color:#1A1A1A;margin:0 0 0.5rem">New onboarding pack ready</h2>
+                            <p style="color:#666;margin:0 0 1.5rem">The onboarding pack for <strong>{full_name}</strong> has been generated and is attached to this email.</p>
+                            <table style="width:100%;border-collapse:collapse;font-size:14px">
+                              <tr><td style="padding:8px 0;color:#999;border-bottom:1px solid #f0f0f0">Employee</td><td style="padding:8px 0;font-weight:600;border-bottom:1px solid #f0f0f0">{full_name}</td></tr>
+                              <tr><td style="padding:8px 0;color:#999;border-bottom:1px solid #f0f0f0">Role</td><td style="padding:8px 0;font-weight:600;border-bottom:1px solid #f0f0f0">{role}</td></tr>
+                              <tr><td style="padding:8px 0;color:#999;border-bottom:1px solid #f0f0f0">Start date</td><td style="padding:8px 0;font-weight:600;border-bottom:1px solid #f0f0f0">{start_fmt}</td></tr>
+                              <tr><td style="padding:8px 0;color:#999">Employment type</td><td style="padding:8px 0;font-weight:600">{emp_type.title()}</td></tr>
+                            </table>
+                            <p style="color:#aaa;font-size:12px;margin:1.5rem 0 0">Browne St. — Pulse 2012 Ltd &bull; 50 Rosebank Rd, Avondale, Auckland 1026</p>
+                          </div>
+                        </div>
+                    """,
+                    "attachments": [{
+                        "filename": filename,
+                        "content": __import__("base64").b64encode(pdf_bytes).decode()
+                    }]
+                }
+                req = urllib.request.Request(
+                    "https://api.resend.com/emails",
+                    data=json.dumps(email_payload).encode(),
+                    headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+                    method="POST"
+                )
+                urllib.request.urlopen(req, timeout=10)
+            except Exception as email_err:
+                # Email failure shouldn't block the download
+                print(f"Email error: {email_err}")
+
         return send_file(combined, as_attachment=True, download_name=filename, mimetype="application/pdf")
     except Exception as e:
         import traceback
