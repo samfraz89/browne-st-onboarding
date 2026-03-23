@@ -586,8 +586,18 @@ def download(token):
     if token not in _pdf_store:
         return "File not found or expired.", 404
     data = _pdf_store[token]
-    buf = io.BytesIO(data["pdf"])
-    return send_file(buf, as_attachment=True, download_name=data["filename"], mimetype="application/pdf")
+    fname = data["filename"]
+    from flask import Response
+    response = Response(
+        data["pdf"],
+        mimetype="application/octet-stream",
+        headers={
+            "Content-Disposition": "attachment; filename=" + fname,
+            "Content-Length": str(len(data["pdf"])),
+            "X-Content-Type-Options": "nosniff",
+        }
+    )
+    return response
 
 @app.route("/generate", methods=["POST"])
 def generate():
@@ -678,26 +688,13 @@ h2{font-size:20px;font-weight:600;color:#1A1A1A;margin-bottom:8px}
   <div class="top-bar"></div>
   <div class="icon">&#10003;</div>
   <h2>Pack ready!</h2>
-  <p class="sub">Onboarding pack for <span class="name">""" + full_name + """</span> is downloading now.</p>
-  <a href="/download/""" + token + """" class="dl-btn" download>&#8595; Download PDF</a>
+  <p class="sub">Onboarding pack for <span class="name">""" + full_name + """</span> is ready.</p>
+  <a href="/download/""" + token + """" class="dl-btn">&#8595; Download PDF</a>
   <div class="tip">
-    <strong>On iPhone:</strong> If the download doesn't start automatically, tap the button above. The file will appear in your <strong>Files app</strong> under Downloads.
+    <strong>On iPhone:</strong> Tap Download PDF &mdash; your browser will ask where to save it, or it will appear automatically in <strong>Files &rarr; Downloads</strong>.
   </div>
   <a href="/" class="back">&#8592; Generate another pack</a>
 </div>
-<script>
-  // Auto-trigger download as soon as page loads
-  window.addEventListener("load", function() {
-    setTimeout(function() {
-      var a = document.createElement("a");
-      a.href = "/download/""" + token + """";
-      a.download = """" + filename + """";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }, 500);
-  });
-</script>
 </body>
 </html>"""
         return ready_html
