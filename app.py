@@ -888,7 +888,7 @@ _LANDING_TMPL = """<!DOCTYPE html><html><head>
     <a class="doc" href="/hr/{{ d.key }}"><span class="ic">{{ d.icon|safe }}</span><span class="tx"><span class="tt">{{ d.title }}</span><span class="dd">{{ d.desc }}</span></span>""" + _CHEV + """</a>
     {% endfor %}
   </div>
-  <div class="foot"><span>Browne St. &mdash; Pulse 2012 Ltd &middot; Avondale</span><a href="/logout">Sign out</a></div>
+  <div class="foot"><span>Browne St. &mdash; Pulse 2012 Ltd &middot; Avondale</span><span><a href="/settings">Settings &amp; backup</a> &middot; <a href="/logout">Sign out</a></span></div>
 </div></body></html>"""
 
 _HR_ICONS = {"informal-discussion": "chat", "investigation": "search", "written-warning": "alert"}
@@ -1238,7 +1238,7 @@ def generate_contract():
 # ===========================================================================
 # Staff records — directory, profiles, uploads, certifications
 # ===========================================================================
-app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25MB uploads
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB (allows full backup restore)
 
 _STAFF_CSS = """
 .bar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:6px}
@@ -1404,7 +1404,7 @@ def staff_list():
   <div class="bar"><h1 style="margin:0">Staff</h1><a class="mini solid" href="/staff/new">{_ic("plus",14)} Add staff</a></div>
   <p class="sub">Each person's folder holds their contracts, records, warnings and certifications.</p>
   {rows}
-  <div class="foot"><span>{len(active)} current &middot; {len(archived)} archived</span><a href="/logout">Sign out</a></div>"""
+  <div class="foot"><span>{len(active)} current &middot; {len(archived)} archived</span><span><a href="/settings">Settings &amp; backup</a> &middot; <a href="/logout">Sign out</a></span></div>"""
     return _page(body, "Staff — Browne St. HR")
 
 def _staff_form_page(staff=None, error=""):
@@ -1620,6 +1620,92 @@ def staff_doc_delete(did):
     doc = store.get_document(did)
     store.delete_document(did)
     return redirect(f"/staff/{doc['staff_id']}" if doc else "/staff")
+
+# ===========================================================================
+# Backup & restore — move the whole data store between machines / to the cloud
+# ===========================================================================
+import zipfile as _zip
+
+@app.route("/settings")
+def settings():
+    c = store.counts()
+    ok = request.args.get("ok", ""); err = request.args.get("err", "")
+    banner = ""
+    if ok:  banner += f'<div class="msg okmsg">{_esc(ok)}</div>'
+    if err: banner += f'<div class="msg err">{_esc(err)}</div>'
+    body = f"""
+  <a class="back" href="/">{_ic("arrow-left",15)} All documents</a>
+  <h1>Settings &amp; backup</h1>
+  <p class="sub">Back up every staff record and file as a single archive, or restore one — the way to move your data onto the live site or hand it over.</p>
+  {banner}
+  <div class="sec-card"><h3>Download backup</h3>
+    <p class="meta" style="margin:-6px 0 14px">{c['staff']} staff &middot; {c['documents']} documents currently stored.</p>
+    <a class="btn" href="/backup" style="display:flex;align-items:center;justify-content:center;gap:9px;text-decoration:none;margin-top:0">{_ic("download",18)} Download backup (.zip)</a>
+  </div>
+  <div class="sec-card"><h3>Restore from backup</h3>
+    <div class="warn-cert" style="margin-bottom:14px"><div class="wh">{_ic("alert",16)} Heads up</div>Restoring <strong>replaces</strong> the current staff records and files with the contents of the backup. Use this on a fresh/live site to load your data in.</div>
+    <form method="POST" action="/restore" enctype="multipart/form-data" onsubmit="return confirm('Restore will replace all current records with this backup. Continue?')" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+      <input type="file" name="backup" accept=".zip" required style="font-size:13px;flex:1;min-width:180px">
+      <button class="mini solid" type="submit" style="height:40px">{_ic("upload",14)} Restore</button>
+    </form>
+  </div>
+  <div class="sec-card"><h3>How to move your data to the live site</h3>
+    <ol style="font-size:13px;color:var(--ink-soft);line-height:1.9;margin:0;padding-left:18px">
+      <li>On the machine that <em>has</em> your data, click <strong>Download backup</strong>.</li>
+      <li>Open the live site and sign in.</li>
+      <li>Come to this Settings page and <strong>Restore</strong> the downloaded file.</li>
+    </ol>
+  </div>
+  <div class="foot"><span>Browne St. &mdash; Pulse 2012 Ltd</span><a href="/logout">Sign out</a></div>"""
+    return _page(body, "Settings — Browne St. HR", extra_css=".okmsg{background:#E7F0E1;color:#2E6B33;border:1px solid #BBD9B4}")
+
+@app.route("/backup")
+def backup():
+    import io as _io
+    from datetime import datetime as _dt
+    buf = _io.BytesIO()
+    with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED) as z:
+        if os.path.exists(store.DB_PATH):
+            z.write(store.DB_PATH, "hr.db")
+        for root, _dirs, files in os.walk(store.FILES_DIR):
+            for fn in files:
+                full = os.path.join(root, fn)
+                z.write(full, os.path.relpath(full, store.DATA_DIR))  # files/<staff>/<file>
+    buf.seek(0)
+    from flask import Response
+    fname = "browne-st-hr-backup-" + _dt.now().strftime("%Y-%m-%d") + ".zip"
+    return Response(buf.read(), mimetype="application/zip",
+                    headers={"Content-Disposition": "attachment; filename=" + fname})
+
+@app.route("/restore", methods=["POST"])
+def restore():
+    import io as _io
+    f = request.files.get("backup")
+    if not f or not (f.filename or "").lower().endswith(".zip"):
+        return redirect("/settings?err=Please choose a .zip backup file.")
+    try:
+        z = _zip.ZipFile(_io.BytesIO(f.read()))
+    except Exception:
+        return redirect("/settings?err=That file is not a valid .zip archive.")
+    if "hr.db" not in z.namelist():
+        return redirect("/settings?err=This zip doesn't look like a Browne St. backup (no hr.db).")
+    os.makedirs(store.DATA_DIR, exist_ok=True)
+    dest_root = os.path.realpath(store.DATA_DIR)
+    written = 0
+    for member in z.namelist():
+        if member.endswith("/"):
+            continue
+        if member != "hr.db" and not member.startswith("files/"):
+            continue
+        target = os.path.realpath(os.path.join(store.DATA_DIR, member))
+        if os.path.commonpath([dest_root, target]) != dest_root:   # zip-slip guard
+            continue
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with z.open(member) as src, open(target, "wb") as out:
+            out.write(src.read())
+        written += 1
+    store.init_db()  # ensure schema exists
+    return redirect(f"/settings?ok=Backup restored — {written} items loaded.")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8765))
