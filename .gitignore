@@ -1,0 +1,20 @@
+# Python / env
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime data — staff records + uploaded files (NEVER commit: contains personal data)
+data/
+
+# Intake / scratch (may contain staff files or personal data)
+_incoming/
+_preview_*.pdf
+
+# One-off migration scripts containing real staff details (kept local only)
+scripts/extract_details.py
+scripts/apply_details.py
+scripts/dump_covers.py
+
+# Editor / tooling
+.claude/
+.DS_Store
