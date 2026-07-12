@@ -832,6 +832,30 @@ h1{font-size:25px;font-weight:700;letter-spacing:-.021em;color:var(--ink);line-h
 .foot{margin-top:28px;padding-top:16px;border-top:1px solid var(--line);font-size:10.5px;color:var(--faint);
   letter-spacing:.03em;display:flex;justify-content:space-between;align-items:center;gap:12px}
 .foot a{color:var(--muted);text-decoration:none}.foot a:hover{color:var(--orange)}
+.ai-panel{border:1px solid var(--line);border-radius:15px;background:var(--surface-2);padding:16px 17px;margin-bottom:8px}
+.ai-head{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;color:var(--ink)}
+.ai-head svg{color:var(--orange)}
+.ai-tag{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);border:1px solid var(--line-2);border-radius:20px;padding:2px 8px}
+.ai-sub{font-size:12px;color:var(--muted);line-height:1.55;margin:6px 0 12px}
+.ai-consent{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;color:var(--ink-soft);line-height:1.45;cursor:pointer;margin-bottom:12px}
+.ai-consent input{margin-top:2px;flex-shrink:0}
+.ai-row{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.ai-status{font-size:12px;color:var(--muted)}
+.mini.rec-on{border-color:#C6402B;color:#C6402B;background:#FCEBE7}
+.ai-transcript{width:100%;min-height:96px;resize:vertical;padding:11px 13px;border:1px solid var(--line-2);border-radius:var(--radius-sm);background:#fff;font-family:inherit;font-size:14px;line-height:1.5;color:var(--ink)}
+.ai-transcript:focus{outline:none;border-color:var(--orange);box-shadow:0 0 0 4px var(--orange-tint)}
+.ai-draft{height:46px;margin-top:12px}
+.ai-result{margin-top:14px}
+.ai-err{background:#FCEBE7;color:#9a2b1a;border:1px solid #F1C6BB;border-radius:11px;padding:11px 13px;font-size:12.5px}
+.ai-done{font-size:12.5px;font-weight:600;color:#2E6B33;background:#E7F0E1;border:1px solid #BBD9B4;border-radius:10px;padding:9px 12px}
+.ai-summary{font-size:13px;color:var(--ink-soft);line-height:1.55;margin-top:10px;padding:0 2px}
+.ai-flags-h{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink);margin:14px 0 8px}
+.ai-flag{border-radius:11px;padding:10px 13px;margin-bottom:8px;border:1px solid var(--line-2);background:#fff}
+.ai-flag.caution{border-color:#F1C79A;background:#FFF6EC}
+.ai-flag.serious{border-color:#F1C6BB;background:#FDEEEA}
+.ai-flag-t{font-size:13px;font-weight:600;color:var(--ink)}
+.ai-flag-s{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.5}
+.ai-disc{font-size:11px;font-style:italic;color:var(--faint);margin-top:12px;line-height:1.5}
 @media(max-width:520px){.card{padding:26px 20px}.row{grid-template-columns:1fr}}
 """
 
@@ -999,6 +1023,20 @@ _HR_TMPL = """<!DOCTYPE html><html><head>
   <a class="back" href="/">&#8592; All documents</a>
   <h1>{{ doc.title }}</h1>
   <p class="sub">Fill in what you can &mdash; leave fields blank to generate a printable template.</p>
+
+  <div class="ai-panel">
+    <div class="ai-head">""" + _ic("chat", 17) + """ AI meeting assistant <span class="ai-tag">optional</span></div>
+    <p class="ai-sub">Record or type the meeting, then let AI draft the notes below and run a New Zealand employment-law process check. Review and edit everything before you generate &mdash; this is guidance, not legal advice.</p>
+    <label class="ai-consent"><input type="checkbox" id="aiConsent"> I confirm the employee has been told this meeting is being recorded / noted and is aware.</label>
+    <div class="ai-row">
+      <button type="button" class="mini" id="aiRecBtn" onclick="aiToggleRec()">&#9679; Record</button>
+      <span class="ai-status" id="aiRecStatus">Not recording</span>
+    </div>
+    <textarea id="aiTranscript" class="ai-transcript" placeholder="The transcript appears here as you speak (Chrome/Edge), or type / paste your notes&hellip;"></textarea>
+    <button type="button" class="btn ai-draft" id="aiDraftBtn" onclick="aiDraft()">Draft notes + compliance check</button>
+    <div id="aiResult" class="ai-result" style="display:none"></div>
+  </div>
+
   <form method="POST" action="/generate-hr">
     <input type="hidden" name="_key" value="{{ doc.key }}">
     {{ staff_control|safe }}
@@ -1014,7 +1052,134 @@ _HR_TMPL = """<!DOCTYPE html><html><head>
     <button class="btn" type="submit">Generate document</button>
   </form>
   {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
-</div></body></html>"""
+</div>
+<script>
+const AI_KEY = "{{ doc.key }}";
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let aiRec=null, aiListening=false, aiFinal="";
+function aiConsentOk(){ if(!document.getElementById('aiConsent').checked){ alert('Please confirm the employee has been informed before recording.'); return false; } return true; }
+function aiUpd(){ const b=document.getElementById('aiRecBtn'), s=document.getElementById('aiRecStatus');
+  if(aiListening){ b.innerHTML='&#9632; Stop'; b.classList.add('rec-on'); s.textContent='Recording\\u2026 speak naturally'; }
+  else { b.innerHTML='&#9679; Record'; b.classList.remove('rec-on'); s.textContent='Not recording'; } }
+function aiToggleRec(){
+  if(!SR){ alert('Voice capture needs Chrome or Edge. You can type or paste notes instead.'); return; }
+  if(aiListening){ aiRec.stop(); return; }
+  if(!aiConsentOk()) return;
+  aiRec=new SR(); aiRec.continuous=true; aiRec.interimResults=true; aiRec.lang='en-NZ';
+  const ta=document.getElementById('aiTranscript'); aiFinal = ta.value ? ta.value.trim()+' ' : '';
+  aiRec.onresult=(e)=>{ let interim=''; for(let i=e.resultIndex;i<e.results.length;i++){ const t=e.results[i][0].transcript; if(e.results[i].isFinal) aiFinal+=t+' '; else interim+=t; } ta.value=aiFinal+interim; };
+  aiRec.onend=()=>{ aiListening=false; aiUpd(); };
+  aiRec.onerror=(e)=>{ aiListening=false; aiUpd(); if(e.error!=='no-speech' && e.error!=='aborted') document.getElementById('aiRecStatus').textContent='Mic issue: '+e.error; };
+  aiRec.start(); aiListening=true; aiUpd();
+}
+function aiEsc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+async function aiDraft(){
+  if(!aiConsentOk()) return;
+  const ta=document.getElementById('aiTranscript'); if(!ta.value.trim()){ alert('Record or type the meeting first.'); return; }
+  const btn=document.getElementById('aiDraftBtn'); btn.disabled=true; btn.textContent='Drafting\\u2026';
+  const emp=(document.querySelector('[name=employee]')||{}).value||'';
+  const role=(document.querySelector('[name=role]')||{}).value||'';
+  let data;
+  try{ const r=await fetch('/ai/meeting-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:AI_KEY,transcript:ta.value,employee:emp,role:role})}); data=await r.json(); }
+  catch(err){ data={error:'Network error: '+err}; }
+  btn.disabled=false; btn.textContent='Draft notes + compliance check';
+  const res=document.getElementById('aiResult'); res.style.display='block';
+  if(data.error){ res.innerHTML='<div class="ai-err">'+aiEsc(data.error)+'</div>'; return; }
+  for(const k in (data.fields||{})){ const el=document.querySelector('[name="'+k+'"]'); if(el && data.fields[k]) el.value=data.fields[k]; }
+  let html='<div class="ai-done">&#10003; Draft filled into the fields below &mdash; please review and edit.</div>';
+  if(data.summary) html+='<div class="ai-summary">'+aiEsc(data.summary)+'</div>';
+  const flags=data.flags||[];
+  if(flags.length){ html+='<div class="ai-flags-h">Employment-law process check</div>';
+    for(const f of flags){ const sev=(f.severity||'info'); html+='<div class="ai-flag '+sev+'"><div class="ai-flag-t">'+aiEsc(f.issue||'')+'</div><div class="ai-flag-s">'+aiEsc(f.suggestion||'')+'</div></div>'; } }
+  else { html+='<div class="ai-flag info"><div class="ai-flag-t">No obvious process issues flagged.</div></div>'; }
+  if(data.disclaimer) html+='<div class="ai-disc">'+aiEsc(data.disclaimer)+'</div>';
+  res.innerHTML=html;
+}
+</script>
+</body></html>"""
+
+# ---- AI meeting assistant (transcript -> structured notes + NZ-law check) --
+_AI_SYSTEM = """You are an HR documentation assistant for Browne St., a café in Auckland, New Zealand (legal entity Pulse 2012 Ltd). You turn a manager's rough notes or a meeting transcript into a clear, professional, factual written record, and you flag possible New Zealand employment-law process issues.
+
+You are NOT a lawyer and must NOT give definitive legal advice. Frame every compliance point as something to check, and recommend seeking advice from an employment adviser or Employment New Zealand for anything serious.
+
+Check the process against New Zealand fair-process principles (Employment Relations Act 2000):
+- Good faith (s4): parties are responsive, communicative, and do not mislead.
+- The "fair and reasonable employer" test (s103A): was this a process a fair and reasonable employer could have followed?
+- Procedural fairness in a disciplinary/investigation meeting: a genuine concern clearly put to the employee; a real opportunity for them to respond and be heard; their explanation genuinely considered with an open mind (no predetermined outcome); the right to be supported or represented (a support person); reasonable notice and timeframes; confidentiality.
+
+Write in New Zealand English — plain, factual, neutral. Never invent facts that are not in the notes; if a field is not covered, return an empty string for it rather than fabricating.
+
+Return ONLY a JSON object (no markdown, no preamble) of exactly this shape:
+{
+  "fields": { "<field_name>": "<text drawn from the notes>", ... },
+  "summary": "<one or two neutral sentences>",
+  "flags": [ { "issue": "<short process concern>", "severity": "info|caution|serious", "suggestion": "<what to check or do>" } ],
+  "disclaimer": "<one sentence reminding this is guidance, not legal advice>"
+}
+"""
+
+def _extract_json(text):
+    import json, re
+    if not text:
+        return None
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\n?", "", t)
+        t = re.sub(r"\n?```$", "", t).strip()
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+    i, j = t.find("{"), t.rfind("}")
+    if i != -1 and j > i:
+        try:
+            return json.loads(t[i:j+1])
+        except Exception:
+            return None
+    return None
+
+def _ai_meeting_notes(key, transcript, employee="", role=""):
+    if not (transcript or "").strip():
+        return {"error": "Nothing to analyse yet — record or type the meeting first."}
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return {"error": "AI notes need an Anthropic API key. Add ANTHROPIC_API_KEY in Railway → Variables, then redeploy."}
+    doc = HR_BY_KEY.get(key)
+    if not doc:
+        return {"error": "Unknown document type."}
+    try:
+        import anthropic
+    except Exception:
+        return {"error": "The 'anthropic' package isn't installed on the server yet (redeploy after adding it)."}
+    fields = [(s["name"], s.get("label", s["name"])) for s in doc["sections"] if s.get("type") in ("long", "lines")]
+    field_lines = "\n".join(f"  - {name}: {label}" for name, label in fields)
+    user = (f"Document type: {doc['title']}\n"
+            f"Staff member: {employee or '(unnamed)'}" + (f", role {role}" if role else "") + "\n\n"
+            f"Fill these fields from the notes (empty string if not covered — never invent facts):\n{field_lines}\n\n"
+            f"Meeting notes / transcript:\n\"\"\"\n{transcript.strip()}\n\"\"\"\n\nReturn only the JSON object.")
+    try:
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model="claude-opus-4-8", max_tokens=6000,
+            thinking={"type": "disabled"}, system=_AI_SYSTEM,
+            messages=[{"role": "user", "content": user}],
+        )
+    except Exception as e:
+        return {"error": f"AI request failed: {e}"}
+    text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", None) == "text")
+    data = _extract_json(text)
+    if data is None:
+        return {"error": "Couldn't parse the AI response — please try again."}
+    known = {name for name, _ in fields}
+    data["fields"] = {k: v for k, v in (data.get("fields") or {}).items() if k in known}
+    return data
+
+@app.route("/ai/meeting-notes", methods=["POST"])
+def ai_meeting_notes():
+    from flask import jsonify
+    d = request.get_json(silent=True) or {}
+    return jsonify(_ai_meeting_notes(d.get("key", ""), d.get("transcript", ""),
+                                     d.get("employee", ""), d.get("role", "")))
 
 @app.route("/hr/<key>", methods=["GET"])
 def hr_form(key):

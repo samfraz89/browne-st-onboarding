@@ -14,7 +14,7 @@ def show(label, resp):
 
 # --- auth gate ---
 show("GET / (no auth -> redirect)", c.get("/"))            # expect 302 -> /login
-show("POST /login", c.post("/login", data={"password": "brownest"}))
+show("POST /login", c.post("/login", data={"password": "browne"}))
 
 # --- public doc pages ---
 for path in ["/", "/onboarding", "/contract", "/job-description",
