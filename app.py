@@ -1369,13 +1369,17 @@ def logout():
 @app.route("/staff")
 def staff_list():
     people = store.list_staff()
-    expiring = store.expiring_certifications(60)
+    alerts = store.attention()
     rows = ""
-    if expiring:
-        items = "".join(f"<div><strong>{_esc(e['full_name'])}</strong> — {_esc(e['name'])}: "
-                        + (f"expired {abs(e['days_left'])} days ago" if e['days_left']<0 else f"expires in {e['days_left']} days")
-                        + f" ({_esc(e['expires'])})</div>" for e in expiring)
-        rows += f'<div class="warn-cert"><div class="wh">{_ic("alert",16)} Certifications needing attention</div>{items}</div>'
+    if alerts:
+        def _when(a):
+            if a["days_left"] < 0:  return f'expired {abs(a["days_left"])} days ago'
+            if a["days_left"] == 0: return 'due today'
+            return f'in {a["days_left"]} days'
+        items = "".join(
+            f'<div><a href="/staff/{a["staff_id"]}" style="color:inherit;text-decoration:underline">{_esc(a["full_name"])}</a>'
+            f' &mdash; {_esc(a["label"])}: {_when(a)} ({_esc(a["date"])})</div>' for a in alerts)
+        rows += f'<div class="warn-cert"><div class="wh">{_ic("alert",16)} Needs attention</div>{items}</div>'
 
     def render_row(p):
         initials = "".join(w[0] for w in (p["full_name"] or "?").split()[:2]).upper()
@@ -1446,9 +1450,17 @@ def _staff_form_page(staff=None, error=""):
       </select></div>
       <div class="f"><label>Start date</label><input name="start_date" type="date" value="{v('start_date')}"></div>
     </div>
-    <div class="f"><label>Status</label><select name="status">
-      {sel('status','active','Active')}{sel('status','on-leave','On leave')}{sel('status','left','Left')}
-    </select></div>
+    <div class="row">
+      <div class="f"><label>Status</label><select name="status">
+        {sel('status','active','Active')}{sel('status','on-leave','On leave')}{sel('status','left','Left')}
+      </select></div>
+      <div class="f"><label>90-day trial ends</label><input name="trial_end" type="date" value="{v('trial_end')}"></div>
+    </div>
+    <div class="lbl">Work eligibility</div>
+    <div class="row">
+      <div class="f"><label>Visa / work status</label><input name="visa_status" value="{v('visa_status')}" placeholder="e.g. Citizen, Resident, Work Visa"></div>
+      <div class="f"><label>Visa expiry <span style="color:var(--faint);font-weight:400">(if applicable)</span></label><input name="visa_expiry" type="date" value="{v('visa_expiry')}"></div>
+    </div>
     <div class="f"><label>Notes</label><textarea name="notes">{v('notes')}</textarea></div>
     <button class="btn" type="submit">{'Save changes' if staff else 'Add staff member'}</button>
   </form>""" + (f'<div class="msg err">{error}</div>' if error else '')
@@ -1490,13 +1502,26 @@ def staff_profile(sid):
             return datetime.strptime(d, "%Y-%m-%d").strftime("%-d %B %Y")
         except Exception:
             return d
+    def _date_days(d):
+        try:
+            dt = datetime.strptime(d, "%Y-%m-%d").date()
+            days = (dt - datetime.today().date()).days
+            base = dt.strftime("%-d %B %Y")
+            if days < 0:   return f"{base} · expired {abs(days)}d ago"
+            if days <= 60: return f"{base} · in {days}d"
+            return base
+        except Exception:
+            return d
     drows_d = []
-    if staff.get("emp_type"):   drows_d.append(("Employment", staff["emp_type"].title()))
-    if staff.get("pay_rate"):   drows_d.append(("Starting rate", f"${staff['pay_rate']} / hr"))
-    if staff.get("start_date"): drows_d.append(("Start date", _fmt_date(staff["start_date"])))
-    if staff.get("pronouns"):   drows_d.append(("Pronouns", staff["pronouns"]))
-    if staff.get("email"):      drows_d.append(("Email", staff["email"]))
-    if staff.get("phone"):      drows_d.append(("Phone", staff["phone"]))
+    if staff.get("emp_type"):    drows_d.append(("Employment", staff["emp_type"].title()))
+    if staff.get("pay_rate"):    drows_d.append(("Starting rate", f"${staff['pay_rate']} / hr"))
+    if staff.get("start_date"):  drows_d.append(("Start date", _fmt_date(staff["start_date"])))
+    if staff.get("trial_end"):   drows_d.append(("90-day trial ends", _date_days(staff["trial_end"])))
+    if staff.get("pronouns"):    drows_d.append(("Pronouns", staff["pronouns"]))
+    if staff.get("email"):       drows_d.append(("Email", staff["email"]))
+    if staff.get("phone"):       drows_d.append(("Phone", staff["phone"]))
+    if staff.get("visa_status"): drows_d.append(("Work status", staff["visa_status"]))
+    if staff.get("visa_expiry"): drows_d.append(("Visa expiry", _date_days(staff["visa_expiry"])))
     _addr = ", ".join(x for x in [staff.get("address"), staff.get("suburb"), staff.get("citypost")] if x)
     details_html = ""
     if drows_d or _addr or staff.get("notes"):

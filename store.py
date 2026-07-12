@@ -77,10 +77,16 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_docs_staff ON documents(staff_id);
         CREATE INDEX IF NOT EXISTS idx_certs_staff ON certifications(staff_id);
         """)
+        # Migration: add later columns to existing databases if missing.
+        have = {r[1] for r in c.execute("PRAGMA table_info(staff)")}
+        for col in ("trial_end", "visa_status", "visa_expiry"):
+            if col not in have:
+                c.execute(f"ALTER TABLE staff ADD COLUMN {col} TEXT")
 
 # --- staff -----------------------------------------------------------------
 STAFF_FIELDS = ["full_name","preferred_name","role","emp_type","pay_rate","pronouns",
-                "email","phone","address","suburb","citypost","start_date","status","notes"]
+                "email","phone","address","suburb","citypost","start_date","status","notes",
+                "trial_end","visa_status","visa_expiry"]
 
 def add_staff(data):
     sid = _uid()
@@ -206,6 +212,37 @@ def expiring_certifications(within_days=60):
                 out.append(d)
     out.sort(key=lambda d: d["days_left"])
     return out
+
+def _staff_date_alerts(field, kind, within_days):
+    """Active staff whose `field` (YYYY-MM-DD) falls on or before the horizon."""
+    today = datetime.date.today()
+    horizon = today + datetime.timedelta(days=within_days)
+    out = []
+    with _conn() as c:
+        rows = c.execute(f"SELECT id, full_name, {field} AS d FROM staff "
+                         f"WHERE {field} IS NOT NULL AND {field} != '' AND status != 'left'")
+        for r in rows:
+            try:
+                dt = datetime.datetime.strptime(r["d"], "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                continue
+            if dt <= horizon:
+                out.append({"staff_id": r["id"], "full_name": r["full_name"],
+                            "kind": kind, "date": r["d"], "days_left": (dt - today).days})
+    return out
+
+def attention(cert_days=60, trial_days=21, visa_days=60):
+    """Unified 'needs attention' list across certifications, 90-day trials and visas."""
+    items = []
+    for c in expiring_certifications(cert_days):
+        items.append({"staff_id": c["staff_id"], "full_name": c["full_name"], "kind": "cert",
+                      "label": c["name"] or "Certification", "date": c["expires"], "days_left": c["days_left"]})
+    for t in _staff_date_alerts("trial_end", "trial", trial_days):
+        t["label"] = "90-day trial ends"; items.append(t)
+    for v in _staff_date_alerts("visa_expiry", "visa", visa_days):
+        v["label"] = "Visa / work eligibility"; items.append(v)
+    items.sort(key=lambda x: x["days_left"])
+    return items
 
 def counts():
     with _conn() as c:
