@@ -106,6 +106,9 @@ hr{border:none;border-top:1px solid var(--line);margin:22px 0}
 .note.filing{display:flex;align-items:center;gap:14px;justify-content:space-between}
 .note .ntx{flex:1;min-width:0}
 .note .ntx-cancel{flex-shrink:0;white-space:nowrap;font-weight:600;color:var(--orange-ink);text-decoration:underline;text-underline-offset:2px}
+.note.ok{display:flex;align-items:center;gap:10px;background:#EAF7EE;color:#1c6b39;border-color:#BEE7CB}
+.note.err{display:flex;align-items:center;gap:10px;background:#FCEBE7;color:#9a2b1a;border-color:#F1C6BB}
+.note.ok svg,.note.err svg{flex-shrink:0}
 .msg{margin-top:16px;padding:12px 14px;border-radius:11px;font-size:13px}
 .err{background:#FCEBE7;color:#9a2b1a;border:1px solid #F1C6BB}
 @media(max-width:520px){.card{padding:26px 20px}.row,.hrs,.types{grid-template-columns:1fr}}
@@ -827,6 +830,9 @@ h1{font-size:25px;font-weight:700;letter-spacing:-.021em;color:var(--ink);line-h
 .note.filing{display:flex;align-items:center;gap:14px;justify-content:space-between}
 .note .ntx{flex:1;min-width:0}
 .note .ntx-cancel{flex-shrink:0;white-space:nowrap;font-weight:600;color:var(--orange-ink);text-decoration:underline;text-underline-offset:2px}
+.note.ok{display:flex;align-items:center;gap:10px;background:#EAF7EE;color:#1c6b39;border-color:#BEE7CB}
+.note.err{display:flex;align-items:center;gap:10px;background:#FCEBE7;color:#9a2b1a;border-color:#F1C6BB}
+.note.ok svg,.note.err svg{flex-shrink:0}
 .msg{margin-top:16px;padding:12px 14px;border-radius:11px;font-size:13px}
 .err{background:#FCEBE7;color:#9a2b1a;border:1px solid #F1C6BB}
 .foot{margin-top:28px;padding-top:16px;border-top:1px solid var(--line);font-size:10.5px;color:var(--faint);
@@ -869,6 +875,7 @@ _ICON_PATHS = {
  "search":'<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
  "alert":'<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4.5"/><path d="M12 17.5h.01"/>',
  "chevron":'<path d="m9 6 6 6-6 6"/>',
+ "check":'<path d="M20 6 9 17l-5-5"/>',
  "plus":'<path d="M12 5v14M5 12h14"/>',
  "edit":'<path d="M12 20h9"/><path d="M16.5 3.5a2.05 2.05 0 0 1 3 3L7.5 18.5 3 20l1.5-4.5Z"/>',
  "upload":'<path d="M12 15V3"/><path d="m7.5 7.5 4.5-4.5 4.5 4.5"/><path d="M20 16.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2.5"/>',
@@ -879,6 +886,7 @@ _ICON_PATHS = {
  "arrow-left":'<path d="M15 6l-6 6 6 6"/>',
  "shield":'<path d="M12 3l7 2.5V11c0 4.4-3 7.9-7 9-4-1.1-7-4.6-7-9V5.5L12 3Z"/><path d="m9 12 2 2 4-4"/>',
  "archive":'<rect x="3" y="4.5" width="18" height="4" rx="1"/><path d="M5 8.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V8.5"/><path d="M10 12h4"/>',
+ "send":'<path d="M21.5 2.5 11 13"/><path d="M21.5 2.5 15 21l-4-8-8-4 18.5-6.5Z"/>',
 }
 def _ic(name, size=20, sw=1.6):
     return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
@@ -1714,6 +1722,8 @@ def staff_profile(sid):
                       f'<div class="meta">{_esc(d["created_at"][:10])}</div></div>'
                       f'<div style="display:flex;gap:6px">'
                       f'<a class="mini" href="/staff/doc/{d["id"]}">{_ic("download",14)} Download</a>'
+                      f'<form method="POST" action="/staff/doc/{d["id"]}/send" onsubmit="return confirm(\'Email this document to {_esc(staff["full_name"])}{" at "+_esc(staff["email"]) if staff.get("email") else ""}?\')" style="margin:0">'
+                      f'<button class="mini" type="submit">{_ic("send",14)} Send</button></form>'
                       f'<form method="POST" action="/staff/doc/{d["id"]}/delete" onsubmit="return confirm(\'Delete this document?\')" style="margin:0">'
                       f'<button class="mini danger" type="submit">{_ic("trash",14)} Delete</button></form></div></div>')
     else:
@@ -1730,8 +1740,14 @@ def staff_profile(sid):
     else:
         crows = '<p class="meta">No certifications recorded.</p>'
 
+    banner = ""
+    _ok, _err = request.args.get("ok"), request.args.get("err")
+    if _ok:  banner = f'<div class="note ok">{_ic("check",15)} {_esc(_ok)}</div>'
+    if _err: banner = f'<div class="note err">{_ic("alert",15)} {_esc(_err)}</div>'
+
     body = f"""
   <a class="back" href="/staff">{_ic("arrow-left",15)} All staff</a>
+  {banner}
   <div class="bar">
     <div style="display:flex;align-items:center;gap:13px;min-width:0">
       <div class="av" style="width:48px;height:48px;font-size:16px">{_esc(initials)}</div>
@@ -1810,6 +1826,52 @@ def staff_doc_delete(did):
     doc = store.get_document(did)
     store.delete_document(did)
     return redirect(f"/staff/{doc['staff_id']}" if doc else "/staff")
+
+def _resend_send(to_email, subject, html, filename, pdf_bytes, reply_to="sam@brownestreet.co.nz"):
+    """Email a PDF via Resend. Returns None on success, else an error string."""
+    key = os.environ.get("RESEND_API_KEY", "")
+    if not key:
+        return "Email isn't set up yet — add RESEND_API_KEY in Railway → Variables."
+    import urllib.request, json, base64 as _b64
+    payload = {"from": "Browne St. <onboarding@brownestreet.co.nz>", "to": [to_email],
+               "reply_to": reply_to, "subject": subject, "html": html,
+               "attachments": [{"filename": filename, "content": _b64.b64encode(pdf_bytes).decode()}]}
+    try:
+        req = urllib.request.Request("https://api.resend.com/emails", data=json.dumps(payload).encode(),
+                                     headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                                     method="POST")
+        urllib.request.urlopen(req, timeout=15)
+        return None
+    except Exception as e:
+        return f"Send failed: {e}"
+
+@app.route("/staff/doc/<did>/send", methods=["POST"])
+def staff_doc_send(did):
+    data, doc = store.document_bytes(did)
+    if data is None:
+        abort(404)
+    staff = store.get_staff(doc["staff_id"])
+    if not staff:
+        abort(404)
+    sid = doc["staff_id"]
+    email = (staff.get("email") or "").strip()
+    if not email:
+        return redirect(f"/staff/{sid}?err=Add {staff['full_name']}'s email address first (Edit), then send.")
+    first = (staff["full_name"] or "there").split()[0]
+    label = _KIND_LABEL.get(doc["kind"], "document").lower()
+    html = (f"<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:600px;margin:0 auto'>"
+            f"<div style='background:#FE5000;height:4px;border-radius:4px 4px 0 0'></div>"
+            f"<div style='padding:1.6rem;border:1px solid #eee;border-top:none'>"
+            f"<h2 style='color:#16120D;margin:0 0 .6rem'>Hi {_esc(first)},</h2>"
+            f"<p style='color:#3B342A;line-height:1.6;margin:0 0 1rem'>Please find attached your <strong>{_esc(label)}</strong> from Browne St.</p>"
+            f"<p style='color:#3B342A;line-height:1.6;margin:0 0 1rem'>Please read it carefully, sign where indicated, and return a signed "
+            f"copy to <a href='mailto:sam@brownestreet.co.nz' style='color:#C43C00'>sam@brownestreet.co.nz</a>. If you have any questions, just reply to this email.</p>"
+            f"<p style='color:#8C7F6B;font-size:12px;margin:1.6rem 0 0'>Browne St. &mdash; Pulse 2012 Ltd &bull; 50 Rosebank Rd, Avondale, Auckland 1026</p>"
+            f"</div></div>")
+    err = _resend_send(email, f"Your {label} from Browne St.", html, store._safe_name(doc["filename"]), data)
+    if err:
+        return redirect(f"/staff/{sid}?err={err}")
+    return redirect(f"/staff/{sid}?ok=Sent to {staff['full_name']} at {email}.")
 
 # ===========================================================================
 # Backup & restore — move the whole data store between machines / to the cloud
