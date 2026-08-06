@@ -609,7 +609,7 @@ def make_docx(form):
         ("26 March 2026",start_fmt),("24 March 2026",sign_fmt),
         ("role of Front of House.",f"role of {role}."),
         ("2.1. The Employee is employed in the role of Front of House.",f"2.1. The Employee is employed in the role of {role}."),
-        ("$28.00 per hour. This rate is above the current adult minimum wage of $23.50 per hour (effective 1 April 2025), and will remain above the minimum wage of $23.95 per hour effective from 1 April 2026.",f"{rate:.2f} per hour. This rate is above the current adult minimum wage of $23.95 per hour effective from 1 April 2026."),
+        ("$28.00 per hour. This rate is above the current adult minimum wage of $23.50 per hour (effective 1 April 2025), and will remain above the minimum wage of $23.95 per hour effective from 1 April 2026.",f"${rate:.2f} per hour. This rate is above the current adult minimum wage of $23.95 per hour effective from 1 April 2026."),
         ("6.3. This is a part-time agreement. The Employee\'s hours of work are set out in clause 13 of this agreement.",h63),
         ("13.1. This is a part-time position. The Employee\'s guaranteed minimum hours of work shall be 20 to 30 hours per week, worked across Monday to Sunday as rostered by the Employer.",h131),
         ("Emily Drage acknowledges and declares that she:",f"{full_name} acknowledges and declares that {psub}:"),
